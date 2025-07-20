@@ -9,8 +9,6 @@ from werkzeug.security import generate_password_hash, check_password_hash
 app = Flask(__name__)
 
 # Veritabanı yapılandırması
-# DATABASE_URL ortam değişkenini doğrudan okuyoruz.
-# SSL bağlantısı için gerekli parametreyi Render arayüzünden DATABASE_URL'ye ekleyeceğiz.
 db_url = os.environ.get('DATABASE_URL')
 
 if not db_url:
@@ -19,16 +17,16 @@ if not db_url:
 # Yeni psycopg sürücüsü için URL şemasını güncelle (postgresql+psycopg://)
 if db_url.startswith('postgresql://'):
     db_url = db_url.replace('postgresql://', 'postgresql+psycopg://')
-else:
-    # URL zaten 'postgresql+psycopg://' ile başlamıyorsa ve başka bir şema varsa hata fırlatabiliriz
-    # Veya direkt 'postgresql+psycopg://' eklemeyi deneyebiliriz.
-    # Şimdilik Render'dan gelen her zaman 'postgresql://' ile başlayacağını varsayıyoruz.
-    pass # Bu kısım şimdilik ihtiyacımız olmayan bir kontrol için yer tutuyor
     
 app.config['SQLALCHEMY_DATABASE_URI'] = db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
+
+# Tabloları uygulama bağlamı içinde oluştur
+# Bu kısım her uygulama başladığında çalışır ve tabloları otomatik oluşturur.
+with app.app_context():
+    db.create_all()
 
 # --- Veritabanı Modelleri ---
 class User(db.Model):
@@ -49,7 +47,6 @@ class User(db.Model):
         self.password_hash = generate_password_hash(password)
 
     def check_password(self, password):
-        # Werkzeug'in check_password_hash fonksiyonu (password, hashed_password) sırasını bekler
         return check_password_hash(self.password_hash, password)
 
     def to_dict(self):
@@ -377,6 +374,6 @@ def create_initial_admin():
     return jsonify({'message': 'Initial admin user created'}), 201
 
 if __name__ == '__main__':
-    with app.app_context():
-        db.create_all() # Tüm tabloları oluştur
-    app.run(debug=True, port=os.environ.get('PORT', 5000)) # Render'da PORT ortam değişkeni kullanılır
+    # Bu blok sadece yerelde çalıştırıldığında tetiklenir, Render'da Gunicorn kullanıldığı için çalışmaz.
+    # Tabloların oluşturulması için db.create_all() çağrısını yukarıya taşıdık.
+    app.run(debug=True, port=os.environ.get('PORT', 5000))
