@@ -10,17 +10,21 @@ app = Flask(__name__)
 
 # Veritabanı yapılandırması
 # DATABASE_URL ortam değişkenini doğrudan okuyoruz.
-# pg8000 için yapılan URL değişikliğini kaldırdık, çünkü artık psycopg2-binary kullanıyoruz.
 # SSL bağlantısı için gerekli parametreyi Render arayüzünden DATABASE_URL'ye ekleyeceğiz.
 db_url = os.environ.get('DATABASE_URL')
 
 if not db_url:
     raise ValueError("DATABASE_URL environment variable is not set. Please set it in Render.")
-    
-# Yeni psycopg sürücüsü için URL şemasını güncelle
+
+# Yeni psycopg sürücüsü için URL şemasını güncelle (postgresql+psycopg://)
 if db_url.startswith('postgresql://'):
     db_url = db_url.replace('postgresql://', 'postgresql+psycopg://')
-
+else:
+    # URL zaten 'postgresql+psycopg://' ile başlamıyorsa ve başka bir şema varsa hata fırlatabiliriz
+    # Veya direkt 'postgresql+psycopg://' eklemeyi deneyebiliriz.
+    # Şimdilik Render'dan gelen her zaman 'postgresql://' ile başlayacağını varsayıyoruz.
+    pass # Bu kısım şimdilik ihtiyacımız olmayan bir kontrol için yer tutuyor
+    
 app.config['SQLALCHEMY_DATABASE_URI'] = db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
@@ -45,7 +49,8 @@ class User(db.Model):
         self.password_hash = generate_password_hash(password)
 
     def check_password(self, password):
-        return check_password_hash(password, self.password_hash)
+        # Werkzeug'in check_password_hash fonksiyonu (password, hashed_password) sırasını bekler
+        return check_password_hash(self.password_hash, password)
 
     def to_dict(self):
         return {
@@ -160,7 +165,8 @@ def admin_login():
 
     admin_user = User.query.filter_by(first_name='Admin', role='admin').first()
 
-    if admin_user and admin_user.check_password(password):
+    # Kullanıcı adı kontrolü ekledik
+    if admin_user and admin_user.first_name == username and admin_user.check_password(password):
         return jsonify({
             'message': 'Admin login successful',
             'user': admin_user.to_dict()
