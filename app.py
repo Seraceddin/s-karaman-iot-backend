@@ -9,17 +9,13 @@ from werkzeug.security import generate_password_hash, check_password_hash
 app = Flask(__name__)
 
 # Veritabanı yapılandırması
-# Render'dan aldığın DATABASE_URL'yi ortam değişkeni olarak okuyacağız.
-# Eğer bu değişken ayarlanmazsa uygulama hata verecektir, bu da istediğimiz bir durum.
+# DATABASE_URL ortam değişkenini doğrudan okuyoruz.
+# pg8000 için yapılan URL değişikliğini kaldırdık, çünkü artık psycopg2-binary kullanıyoruz.
+# SSL bağlantısı için gerekli parametreyi Render arayüzünden DATABASE_URL'ye ekleyeceğiz.
 db_url = os.environ.get('DATABASE_URL')
 
 if not db_url:
     raise ValueError("DATABASE_URL environment variable is not set. Please set it in Render.")
-
-# pg8000 kullanmak için URL şemasını güncelle
-# Eğer URL zaten 'postgresql+pg8000://' ile başlamıyorsa ekle.
-if db_url.startswith('postgresql://'):
-    db_url = db_url.replace('postgresql://', 'postgresql+pg8000://')
 
 app.config['SQLALCHEMY_DATABASE_URI'] = db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
@@ -94,7 +90,7 @@ class UsageLog(db.Model):
     end_time = db.Column(db.DateTime, nullable=True) # Makine durduğunda güncellenecek
     duration_minutes = db.Column(db.Integer, nullable=True) # Kullanım süresi dakika cinsinden
     status = db.Column(db.String(50), nullable=False) # 'started', 'stopped'
-
+    
     user = db.relationship('User', backref=db.backref('usage_logs', lazy=True))
     machine = db.relationship('Machine', backref=db.backref('usage_logs', lazy=True))
 
@@ -176,7 +172,7 @@ def get_user_machines(device_id):
         return jsonify({'message': 'User not found'}), 404
     if user.role != 'technician' or not user.is_approved:
         return jsonify({'message': 'Unauthorized access or user not approved'}), 403
-
+    
     machines_data = [m.to_dict() for m in user.machines]
     return jsonify({'machines': machines_data}), 200
 
@@ -242,7 +238,7 @@ def manage_users():
 
         if not (first_name and last_name and device_id):
             return jsonify({'message': 'Missing data'}), 400
-
+        
         if User.query.filter_by(device_id=device_id).first():
             return jsonify({'message': 'User with this device ID already exists'}), 409
 
@@ -252,7 +248,7 @@ def manage_users():
         db.session.add(new_user)
         db.session.commit()
         return jsonify({'message': 'User created', 'user': new_user.to_dict()}), 201
-
+    
     # GET metodu
     users = User.query.all()
     return jsonify([user.to_dict() for user in users]), 200
@@ -264,7 +260,7 @@ def manage_single_user(user_id):
 
     if request.method == 'GET':
         return jsonify(user.to_dict()), 200
-
+    
     elif request.method == 'PUT':
         data = request.get_json()
         user.first_name = data.get('first_name', user.first_name)
@@ -285,11 +281,11 @@ def manage_single_user(user_id):
 
         db.session.commit()
         return jsonify({'message': 'User updated', 'user': user.to_dict()}), 200
-
+    
     elif request.method == 'DELETE':
         for user_machine in list(user.machines): # Kopyayla döngü yap, silerken problem olmaması için
             user.machines.remove(user_machine)
-
+        
         # Kullanım loglarını da sil (veya statüsünü güncelle)
         UsageLog.query.filter_by(user_id=user.id).update({'status': 'cancelled', 'end_time': datetime.utcnow()})
         db.session.delete(user)
@@ -307,7 +303,7 @@ def manage_machines():
 
         if not (name and mac_address):
             return jsonify({'message': 'Missing data'}), 400
-
+        
         if Machine.query.filter_by(mac_address=mac_address).first():
             return jsonify({'message': 'Machine with this MAC address already exists'}), 409
 
@@ -315,7 +311,7 @@ def manage_machines():
         db.session.add(new_machine)
         db.session.commit()
         return jsonify({'message': 'Machine created', 'machine': new_machine.to_dict()}), 201
-
+    
     # GET metodu
     machines = Machine.query.all()
     return jsonify([machine.to_dict() for machine in machines]), 200
@@ -326,51 +322,3 @@ def manage_single_machine(machine_id):
     machine = Machine.query.get_or_404(machine_id)
 
     if request.method == 'GET':
-        return jsonify(machine.to_dict()), 200
-
-    elif request.method == 'PUT':
-        data = request.get_json()
-        machine.name = data.get('name', machine.name)
-        machine.mac_address = data.get('mac_address', machine.mac_address)
-        machine.is_active = data.get('is_active', machine.is_active)
-        db.session.commit()
-        return jsonify({'message': 'Machine updated', 'machine': machine.to_dict()}), 200
-
-    elif request.method == 'DELETE':
-        for user in machine.assigned_users:
-            user.machines.remove(machine) 
-        UsageLog.query.filter_by(machine_id=machine.id, status='started').update({'status': 'cancelled', 'end_time': datetime.utcnow()})
-        db.session.delete(machine)
-        db.session.commit()
-        return jsonify({'message': 'Machine deleted'}), 204
-
-@app.route('/api/admin/usage_logs', methods=['GET'])
-def get_all_usage_logs():
-    # TODO: Admin/manager rol kontrolü
-    logs = UsageLog.query.order_by(UsageLog.start_time.desc()).all()
-    return jsonify([log.to_dict() for log in logs]), 200
-
-@app.route('/api/admin/create_admin_user', methods=['POST'])
-def create_initial_admin():
-    # Bu endpoint sadece ilk admin kullanıcısını oluşturmak içindir.
-    # Üretim ortamında bu endpointi devre dışı bırakmak veya çok sıkı yetkilendirmek gerekir.
-    admin_user_exists = User.query.filter_by(role='admin').first()
-    if admin_user_exists:
-        return jsonify({'message': 'Admin user already exists'}), 409
-
-    data = request.get_json()
-    password = data.get('password')
-    if not password:
-        return jsonify({'message': 'Password is required'}), 400
-
-    # Kendi admin kullanıcın için: Kullanıcı Adı: 'Admin', Şifre: 'adminpass' olacak (request ile gönderilecek)
-    new_admin = User(first_name='Admin', last_name='System', device_id=secrets.token_hex(16), role='admin', is_approved=True) # Rastgele device_id
-    new_admin.set_password(password)
-    db.session.add(new_admin)
-    db.session.commit()
-    return jsonify({'message': 'Initial admin user created'}), 201
-
-if __name__ == '__main__':
-    with app.app_context():
-        db.create_all() # Tüm tabloları oluştur
-    app.run(debug=True, port=os.environ.get('PORT', 5000)) # Render'da PORT ortam değişkeni kullanılır
