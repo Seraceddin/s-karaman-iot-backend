@@ -5,10 +5,8 @@ from datetime import datetime
 import os
 import secrets
 from werkzeug.security import generate_password_hash, check_password_hash
-from flask_cors import CORS
 
 app = Flask(__name__)
-CORS(app)
 
 # Veritabanı yapılandırması
 db_url = os.environ.get('DATABASE_URL')
@@ -27,7 +25,6 @@ db = SQLAlchemy(app)
 
 # Tabloları uygulama bağlamı içinde oluştur
 # Bu kısım her uygulama başladığında çalışır ve tabloları otomatik oluşturur.
-# Bu şekilde Flask'ın uygulama bağlamı zaten kurulmuş olur.
 with app.app_context():
     db.create_all()
 
@@ -50,7 +47,7 @@ class User(db.Model):
         self.password_hash = generate_password_hash(password)
 
     def check_password(self, password):
-        # Werkzeug'in check_password_hash fonksiyonu (password, hashed_password) sırasını bekler
+        # Werkzeug'in check_password_hash fonksiyonu (hashed_password, plain_password) sırasını bekler
         return check_password_hash(self.password_hash, password)
 
     def to_dict(self):
@@ -161,13 +158,17 @@ def auth_device():
 @app.route('/api/auth/admin_login', methods=['POST'])
 def admin_login():
     data = request.get_json()
-    username = data.get('username')
+    username = data.get('username') # Web panelinden gelen kullanıcı adı
     password = data.get('password')
 
-    admin_user = User.query.filter_by(first_name='Admin', role='admin').first()
+    # Kullanıcıyı bulurken büyük/küçük harf duyarsız arama yapalım.
+    # Ayrıca role kontrolünü de ekleyelim.
+    admin_user = User.query.filter(
+        db.func.lower(User.first_name) == db.func.lower(username),
+        User.role == 'admin'
+    ).first()
 
-    # Kullanıcı adı kontrolü ekledik
-    if admin_user and admin_user.first_name == username and admin_user.check_password(password):
+    if admin_user and admin_user.check_password(password):
         return jsonify({
             'message': 'Admin login successful',
             'user': admin_user.to_dict()
