@@ -1,4 +1,5 @@
 Flask==2.3.2
 Flask-SQLAlchemy==3.0.3
-psycopg[binary]==3.2.9 # Python 3.13 ile uyumlu olması beklenen en güncel stable binary sürüm
+psycopg[binary]==3.2.9
 gunicorn==20.1.0
+Flask-Cors==4.0.1  # Bu satırı ekle (en güncel stabil sürüm)
