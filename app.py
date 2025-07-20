@@ -5,9 +5,11 @@ from datetime import datetime
 import os
 import secrets
 from werkzeug.security import generate_password_hash, check_password_hash
+from flask_cors import CORS # BU SATIR OLMALI!
+
 
 app = Flask(__name__)
-
+CORS(app)
 # Veritabanı yapılandırması
 db_url = os.environ.get('DATABASE_URL')
 
