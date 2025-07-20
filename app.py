@@ -25,6 +25,7 @@ db = SQLAlchemy(app)
 
 # Tabloları uygulama bağlamı içinde oluştur
 # Bu kısım her uygulama başladığında çalışır ve tabloları otomatik oluşturur.
+# Bu şekilde Flask'ın uygulama bağlamı zaten kurulmuş olur.
 with app.app_context():
     db.create_all()
 
@@ -47,6 +48,7 @@ class User(db.Model):
         self.password_hash = generate_password_hash(password)
 
     def check_password(self, password):
+        # Werkzeug'in check_password_hash fonksiyonu (password, hashed_password) sırasını bekler
         return check_password_hash(self.password_hash, password)
 
     def to_dict(self):
