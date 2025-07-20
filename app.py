@@ -16,6 +16,10 @@ db_url = os.environ.get('DATABASE_URL')
 
 if not db_url:
     raise ValueError("DATABASE_URL environment variable is not set. Please set it in Render.")
+    
+# Yeni psycopg sürücüsü için URL şemasını güncelle
+if db_url.startswith('postgresql://'):
+    db_url = db_url.replace('postgresql://', 'postgresql+psycopg://')
 
 app.config['SQLALCHEMY_DATABASE_URI'] = db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
