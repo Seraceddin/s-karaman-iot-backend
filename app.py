@@ -322,3 +322,51 @@ def manage_single_machine(machine_id):
     machine = Machine.query.get_or_404(machine_id)
 
     if request.method == 'GET':
+        return jsonify(machine.to_dict()), 200
+    
+    elif request.method == 'PUT':
+        data = request.get_json()
+        machine.name = data.get('name', machine.name)
+        machine.mac_address = data.get('mac_address', machine.mac_address)
+        machine.is_active = data.get('is_active', machine.is_active)
+        db.session.commit()
+        return jsonify({'message': 'Machine updated', 'machine': machine.to_dict()}), 200
+    
+    elif request.method == 'DELETE':
+        for user in machine.assigned_users:
+            user.machines.remove(machine) 
+        UsageLog.query.filter_by(machine_id=machine.id, status='started').update({'status': 'cancelled', 'end_time': datetime.utcnow()})
+        db.session.delete(machine)
+        db.session.commit()
+        return jsonify({'message': 'Machine deleted'}), 204
+
+@app.route('/api/admin/usage_logs', methods=['GET'])
+def get_all_usage_logs():
+    # TODO: Admin/manager rol kontrolü
+    logs = UsageLog.query.order_by(UsageLog.start_time.desc()).all()
+    return jsonify([log.to_dict() for log in logs]), 200
+
+@app.route('/api/admin/create_admin_user', methods=['POST'])
+def create_initial_admin():
+    # Bu endpoint sadece ilk admin kullanıcısını oluşturmak içindir.
+    # Üretim ortamında bu endpointi devre dışı bırakmak veya çok sıkı yetkilendirmek gerekir.
+    admin_user_exists = User.query.filter_by(role='admin').first()
+    if admin_user_exists:
+        return jsonify({'message': 'Admin user already exists'}), 409
+    
+    data = request.get_json()
+    password = data.get('password')
+    if not password:
+        return jsonify({'message': 'Password is required'}), 400
+
+    # Kendi admin kullanıcın için: Kullanıcı Adı: 'Admin', Şifre: 'adminpass' olacak (request ile gönderilecek)
+    new_admin = User(first_name='Admin', last_name='System', device_id=secrets.token_hex(16), role='admin', is_approved=True) # Rastgele device_id
+    new_admin.set_password(password)
+    db.session.add(new_admin)
+    db.session.commit()
+    return jsonify({'message': 'Initial admin user created'}), 201
+
+if __name__ == '__main__':
+    with app.app_context():
+        db.create_all() # Tüm tabloları oluştur
+    app.run(debug=True, port=os.environ.get('PORT', 5000)) # Render'da PORT ortam değişkeni kullanılır
