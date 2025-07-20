@@ -1,0 +1,18 @@
+# render.yaml
+services:
+  - type: web
+    name: atalian-machine-api # Render Web Hizmetine vereceğin isimle eşleşmeli
+    env: python
+    plan: free
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "gunicorn app:app"
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: atalian-machine-db # PostgreSQL veritabanına verdiğin isimle eşleşmeli
+          property: connectionString
+      - key: FLASK_APP
+        value: app
+      - key: FLASK_ENV
+        value: production
+    pythonVersion: 3.9.18 # PYTHON SÜRÜMÜNÜ BURADA KESİN OLARAK BELİRTİYORUZ
