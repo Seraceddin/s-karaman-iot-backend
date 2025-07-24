@@ -37,7 +37,8 @@ class User(db.Model):
     last_name = db.Column(db.String(80), nullable=False)
     device_id = db.Column(db.String(255), unique=True, nullable=False) # Telefon UUID'si
     role = db.Column(db.String(50), default='pending', nullable=False) # pending, technician, manager, admin
-    # is_approved alanı kaldırıldı, rol pending değilse onaylı kabul edilecek
+    # is_approved alanını geri getiriyoruz ve varsayılan değer atıyoruz
+    is_approved = db.Column(db.Boolean, default=False, nullable=False) # is_approved alanını geri getirdik ve default False yaptık
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     password_hash = db.Column(db.String(255), nullable=True) # Admin kullanıcıları için şifre alanı
@@ -57,7 +58,7 @@ class User(db.Model):
             'last_name': self.last_name,
             'device_id': self.device_id,
             'role': self.role,
-            'is_approved': self.role != 'pending', # Rol pending değilse onaylı kabul et
+            'is_approved': self.is_approved, # is_approved'ı tekrar ekledik
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat(),
             'machines': [m.to_dict() for m in self.machines] if self.role == 'technician' else []
@@ -148,7 +149,7 @@ def register_device():
     if User.query.filter_by(device_id=device_id).first():
         return jsonify({'message': 'User with this device ID already exists'}), 409
 
-    new_user = User(first_name=first_name, last_name=last_name, device_id=device_id, role='pending') # Varsayılan olarak pending
+    new_user = User(first_name=first_name, last_name=last_name, device_id=device_id, role='pending', is_approved=False) # is_approved'ı False olarak kaydet
     db.session.add(new_user)
     db.session.commit()
     return jsonify({
@@ -250,7 +251,7 @@ def manage_users():
         if User.query.filter_by(device_id=device_id).first():
             return jsonify({'message': 'User with this device ID already exists'}), 409
 
-        new_user = User(first_name=first_name, last_name=last_name, device_id=device_id, role=role)
+        new_user = User(first_name=first_name, last_name=last_name, device_id=device_id, role=role, is_approved=False) # is_approved'ı False olarak kaydet
         if role == 'admin' and password:
             new_user.set_password(password)
         db.session.add(new_user)
@@ -273,6 +274,7 @@ def manage_single_user(user_id):
         user.first_name = data.get('first_name', user.first_name)
         user.last_name = data.get('last_name', user.last_name)
         user.role = data.get('role', user.role) # Rolü doğrudan güncelle
+        user.is_approved = data.get('is_approved', user.is_approved) # is_approved'ı güncelleyebiliriz
 
         if user.role == 'admin' and 'password' in data and data['password']:
             user.set_password(data['password'])
@@ -358,7 +360,7 @@ def create_initial_admin():
     if not password:
         return jsonify({'message': 'Password is required'}), 400
 
-    new_admin = User(first_name='Admin', last_name='System', device_id=secrets.token_hex(16), role='admin')
+    new_admin = User(first_name='Admin', last_name='System', device_id=secrets.token_hex(16), role='admin', is_approved=True) # is_approved'ı True olarak kaydet
     new_admin.set_password(password)
     db.session.add(new_admin)
     db.session.commit()
