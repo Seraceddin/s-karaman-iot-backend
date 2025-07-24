@@ -5,18 +5,18 @@ from datetime import datetime
 import os
 import secrets
 from werkzeug.security import generate_password_hash, check_password_hash
-from flask_cors import CORS # BU SATIR OLMALI!
-
+from flask_cors import CORS # CORS için
 
 app = Flask(__name__)
-CORS(app)
+CORS(app) # CORS'u etkinleştir
+
 # Veritabanı yapılandırması
 db_url = os.environ.get('DATABASE_URL')
 
 if not db_url:
     raise ValueError("DATABASE_URL environment variable is not set. Please set it in Render.")
 
-# Yeni psycopg sürücüsü için URL şemasını güncelle (postgresql+psycopg://)
+# Yeni psycopg sürücüsü için URL şemasını güncelle
 if db_url.startswith('postgresql://'):
     db_url = db_url.replace('postgresql://', 'postgresql+psycopg://')
     
@@ -25,8 +25,7 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
 
-# Tabloları uygulama bağlamı içinde oluştur
-# Bu kısım her uygulama başladığında çalışır ve tabloları otomatik oluşturur.
+# Tabloları uygulama bağlamı içinde oluştur (Her başlangıçta var olanı kontrol edip oluşturur)
 with app.app_context():
     db.create_all()
 
@@ -38,7 +37,7 @@ class User(db.Model):
     last_name = db.Column(db.String(80), nullable=False)
     device_id = db.Column(db.String(255), unique=True, nullable=False) # Telefon UUID'si
     role = db.Column(db.String(50), default='pending', nullable=False) # pending, technician, manager, admin
-    is_approved = db.Column(db.Boolean, default=False, nullable=False)
+    # is_approved alanı kaldırıldı, rol pending değilse onaylı kabul edilecek
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     password_hash = db.Column(db.String(255), nullable=True) # Admin kullanıcıları için şifre alanı
@@ -49,7 +48,6 @@ class User(db.Model):
         self.password_hash = generate_password_hash(password)
 
     def check_password(self, password):
-        # Werkzeug'in check_password_hash fonksiyonu (hashed_password, plain_password) sırasını bekler
         return check_password_hash(self.password_hash, password)
 
     def to_dict(self):
@@ -59,7 +57,7 @@ class User(db.Model):
             'last_name': self.last_name,
             'device_id': self.device_id,
             'role': self.role,
-            'is_approved': self.is_approved,
+            'is_approved': self.role != 'pending', # Rol pending değilse onaylı kabul et
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat(),
             'machines': [m.to_dict() for m in self.machines] if self.role == 'technician' else []
@@ -116,13 +114,11 @@ class UsageLog(db.Model):
 
 # --- API Endpointleri ---
 
-# Cihaz kaydı/kimlik doğrulama endpointi
+# Cihazı sorgula (cihaz varsa bilgisini döner, yoksa 404 döner)
 @app.route('/api/auth/device', methods=['POST'])
 def auth_device():
     data = request.get_json()
     device_id = data.get('device_id')
-    first_name = data.get('first_name')
-    last_name = data.get('last_name')
 
     if not device_id:
         return jsonify({'message': 'Device ID is required'}), 400
@@ -130,47 +126,46 @@ def auth_device():
     user = User.query.filter_by(device_id=device_id).first()
 
     if user:
-        # Kullanıcı zaten kayıtlıysa
-        if user.is_approved:
-            # Onaylanmış kullanıcı
-            return jsonify({
-                'message': 'Authenticated',
-                'user': user.to_dict()
-            }), 200
-        else:
-            # Onay bekleyen kullanıcı
-            return jsonify({
-                'message': 'Pending approval',
-                'user': user.to_dict()
-            }), 202 # Accepted (işlem devam ediyor)
-    else:
-        # Yeni kayıt isteği
-        if not (first_name and last_name):
-            return jsonify({'message': 'First name and last name are required for new registration'}), 400
-
-        new_user = User(first_name=first_name, last_name=last_name, device_id=device_id, role='pending', is_approved=False)
-        db.session.add(new_user)
-        db.session.commit()
         return jsonify({
-            'message': 'Registration request sent. Waiting for admin approval.',
-            'user': new_user.to_dict()
-        }), 201 # Created
+            'message': 'Authenticated',
+            'user': user.to_dict()
+        }), 200
+    else:
+        # Kullanıcı yoksa, kayıtlı değilse 404 döndür. Artık burada yeni kullanıcı oluşturulmayacak!
+        return jsonify({'message': 'User not registered with this device ID'}), 404
+
+# YENİ CİHAZ KAYDI (ilk kez kayıt olanlar için)
+@app.route('/api/auth/register_device', methods=['POST'])
+def register_device():
+    data = request.get_json()
+    device_id = data.get('device_id')
+    first_name = data.get('first_name')
+    last_name = data.get('last_name')
+
+    if not (device_id and first_name and last_name):
+        return jsonify({'message': 'Device ID, first name and last name are required for registration'}), 400
+
+    if User.query.filter_by(device_id=device_id).first():
+        return jsonify({'message': 'User with this device ID already exists'}), 409
+
+    new_user = User(first_name=first_name, last_name=last_name, device_id=device_id, role='pending') # Varsayılan olarak pending
+    db.session.add(new_user)
+    db.session.commit()
+    return jsonify({
+        'message': 'Registration request sent. Waiting for admin approval.',
+        'user': new_user.to_dict()
+    }), 201
 
 # Admin girişi için endpoint (Web Admin Paneli kullanacak)
 @app.route('/api/auth/admin_login', methods=['POST'])
 def admin_login():
     data = request.get_json()
-    username = data.get('username') # Web panelinden gelen kullanıcı adı
+    username = data.get('username')
     password = data.get('password')
 
-    # Kullanıcıyı bulurken büyük/küçük harf duyarsız arama yapalım.
-    # Ayrıca role kontrolünü de ekleyelim.
-    admin_user = User.query.filter(
-        db.func.lower(User.first_name) == db.func.lower(username),
-        User.role == 'admin'
-    ).first()
+    admin_user = User.query.filter_by(first_name='Admin', role='admin').first()
 
-    if admin_user and admin_user.check_password(password):
+    if admin_user and admin_user.first_name.lower() == username.lower() and admin_user.check_password(password):
         return jsonify({
             'message': 'Admin login successful',
             'user': admin_user.to_dict()
@@ -184,8 +179,9 @@ def get_user_machines(device_id):
     user = User.query.filter_by(device_id=device_id).first()
     if not user:
         return jsonify({'message': 'User not found'}), 404
-    if user.role != 'technician' or not user.is_approved:
-        return jsonify({'message': 'Unauthorized access or user not approved'}), 403
+    # Rolü pending değilse veya onaylıysa erişim izni ver
+    if user.role == 'pending':
+        return jsonify({'message': 'User not approved yet'}), 403
     
     machines_data = [m.to_dict() for m in user.machines]
     return jsonify({'machines': machines_data}), 200
@@ -202,8 +198,8 @@ def start_usage_log():
 
     if not user or not machine:
         return jsonify({'message': 'User or Machine not found'}), 404
-    if not user.is_approved:
-        return jsonify({'message': 'User not approved'}), 403
+    if user.role == 'pending':
+        return jsonify({'message': 'User not approved yet'}), 403
 
     new_log = UsageLog(user_id=user.id, machine_id=machine.id, start_time=datetime.utcnow(), status='started')
     db.session.add(new_log)
@@ -222,8 +218,8 @@ def stop_usage_log():
 
     if not user or not machine:
         return jsonify({'message': 'User or Machine not found'}), 404
-    if not user.is_approved:
-        return jsonify({'message': 'User not approved'}), 403
+    if user.role == 'pending':
+        return jsonify({'message': 'User not approved yet'}), 403
 
     latest_log = UsageLog.query.filter_by(user_id=user.id, machine_id=machine.id, status='started').order_by(UsageLog.start_time.desc()).first()
 
@@ -240,14 +236,12 @@ def stop_usage_log():
 # Admin ve Yönetici paneli endpointleri (Web Admin Paneli tarafından kullanılacak)
 @app.route('/api/admin/users', methods=['GET', 'POST'])
 def manage_users():
-    # TODO: Burada admin/manager rol kontrolü yapılmalı
-    if request.method == 'POST':
+    if request.method == 'POST': # Bu POST yeni kullanıcı oluşturmak içindir (web panelden)
         data = request.get_json()
         first_name = data.get('first_name')
         last_name = data.get('last_name')
         device_id = data.get('device_id')
         role = data.get('role', 'pending')
-        is_approved = data.get('is_approved', False)
         password = data.get('password')
 
         if not (first_name and last_name and device_id):
@@ -256,7 +250,7 @@ def manage_users():
         if User.query.filter_by(device_id=device_id).first():
             return jsonify({'message': 'User with this device ID already exists'}), 409
 
-        new_user = User(first_name=first_name, last_name=last_name, device_id=device_id, role=role, is_approved=is_approved)
+        new_user = User(first_name=first_name, last_name=last_name, device_id=device_id, role=role)
         if role == 'admin' and password:
             new_user.set_password(password)
         db.session.add(new_user)
@@ -269,7 +263,6 @@ def manage_users():
 
 @app.route('/api/admin/users/<int:user_id>', methods=['GET', 'PUT', 'DELETE'])
 def manage_single_user(user_id):
-    # TODO: Admin/manager rol kontrolü
     user = User.query.get_or_404(user_id)
 
     if request.method == 'GET':
@@ -279,8 +272,7 @@ def manage_single_user(user_id):
         data = request.get_json()
         user.first_name = data.get('first_name', user.first_name)
         user.last_name = data.get('last_name', user.last_name)
-        user.role = data.get('role', user.role)
-        user.is_approved = data.get('is_approved', user.is_approved)
+        user.role = data.get('role', user.role) # Rolü doğrudan güncelle
 
         if user.role == 'admin' and 'password' in data and data['password']:
             user.set_password(data['password'])
@@ -297,10 +289,9 @@ def manage_single_user(user_id):
         return jsonify({'message': 'User updated', 'user': user.to_dict()}), 200
     
     elif request.method == 'DELETE':
-        for user_machine in list(user.machines): # Kopyayla döngü yap, silerken problem olmaması için
+        for user_machine in list(user.machines):
             user.machines.remove(user_machine)
         
-        # Kullanım loglarını da sil (veya statüsünü güncelle)
         UsageLog.query.filter_by(user_id=user.id).update({'status': 'cancelled', 'end_time': datetime.utcnow()})
         db.session.delete(user)
         db.session.commit()
@@ -308,7 +299,6 @@ def manage_single_user(user_id):
 
 @app.route('/api/admin/machines', methods=['GET', 'POST'])
 def manage_machines():
-    # TODO: Admin/manager rol kontrolü
     if request.method == 'POST':
         data = request.get_json()
         name = data.get('name')
@@ -326,13 +316,11 @@ def manage_machines():
         db.session.commit()
         return jsonify({'message': 'Machine created', 'machine': new_machine.to_dict()}), 201
     
-    # GET metodu
     machines = Machine.query.all()
     return jsonify([machine.to_dict() for machine in machines]), 200
 
 @app.route('/api/admin/machines/<int:machine_id>', methods=['GET', 'PUT', 'DELETE'])
 def manage_single_machine(machine_id):
-    # TODO: Admin/manager rol kontrolü
     machine = Machine.query.get_or_404(machine_id)
 
     if request.method == 'GET':
@@ -356,14 +344,11 @@ def manage_single_machine(machine_id):
 
 @app.route('/api/admin/usage_logs', methods=['GET'])
 def get_all_usage_logs():
-    # TODO: Admin/manager rol kontrolü
     logs = UsageLog.query.order_by(UsageLog.start_time.desc()).all()
     return jsonify([log.to_dict() for log in logs]), 200
 
 @app.route('/api/admin/create_admin_user', methods=['POST'])
 def create_initial_admin():
-    # Bu endpoint sadece ilk admin kullanıcısını oluşturmak içindir.
-    # Üretim ortamında bu endpointi devre dışı bırakmak veya çok sıkı yetkilendirmek gerekir.
     admin_user_exists = User.query.filter_by(role='admin').first()
     if admin_user_exists:
         return jsonify({'message': 'Admin user already exists'}), 409
@@ -373,14 +358,13 @@ def create_initial_admin():
     if not password:
         return jsonify({'message': 'Password is required'}), 400
 
-    # Kendi admin kullanıcın için: Kullanıcı Adı: 'Admin', Şifre: 'adminpass' olacak (request ile gönderilecek)
-    new_admin = User(first_name='Admin', last_name='System', device_id=secrets.token_hex(16), role='admin', is_approved=True) # Rastgele device_id
+    new_admin = User(first_name='Admin', last_name='System', device_id=secrets.token_hex(16), role='admin')
     new_admin.set_password(password)
     db.session.add(new_admin)
     db.session.commit()
     return jsonify({'message': 'Initial admin user created'}), 201
 
 if __name__ == '__main__':
-    # Bu blok sadece yerelde çalıştırıldığında tetiklenir, Render'da Gunicorn kullanıldığı için çalışmaz.
-    # Tabloların oluşturulması için db.create_all() çağrısını yukarıya taşıdık.
+    with app.app_context():
+        db.create_all()
     app.run(debug=True, port=os.environ.get('PORT', 5000))
