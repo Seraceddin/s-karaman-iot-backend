@@ -25,9 +25,10 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
 
-# Tabloları uygulama bağlamı içinde oluştur (Her başlangıçta var olanı kontrol edip oluşturur)
-with app.app_context():
-    db.create_all()
+# Tabloları uygulama bağlamı içinde oluşturma komutunu buradan kaldırıyoruz!
+# Bu işlem artık Render'ın build komutu içinde tek seferlik yapılacak.
+# with app.app_context():
+#     db.create_all()
 
 # --- Veritabanı Modelleri ---
 class User(db.Model):
@@ -37,8 +38,7 @@ class User(db.Model):
     last_name = db.Column(db.String(80), nullable=False)
     device_id = db.Column(db.String(255), unique=True, nullable=False) # Telefon UUID'si
     role = db.Column(db.String(50), default='pending', nullable=False) # pending, technician, manager, admin
-    # is_approved alanını geri getiriyoruz ve varsayılan değer atıyoruz
-    is_approved = db.Column(db.Boolean, default=False, nullable=False) # is_approved alanını geri getirdik ve default False yaptık
+    is_approved = db.Column(db.Boolean, default=False, nullable=False) # is_approved alanı geri getirdik ve default False yaptık
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     password_hash = db.Column(db.String(255), nullable=True) # Admin kullanıcıları için şifre alanı
@@ -69,7 +69,7 @@ class Machine(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(80), unique=True, nullable=False) # Örneğin: "855-4", "Lavuk"
     mac_address = db.Column(db.String(17), unique=True, nullable=False) # XX:XX:XX:XX:XX:XX formatında
-    is_active = db.Column(db.Boolean, default=True, nullable=False) # Makine aktif mi?
+    status = db.Column(db.String(50), default='active', nullable=False) # 'active', 'maintenance'
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -78,7 +78,7 @@ class Machine(db.Model):
             'id': self.id,
             'name': self.name,
             'mac_address': self.mac_address,
-            'is_active': self.is_active,
+            'status': self.status, # is_active yerine status döndürüyoruz
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat()
         }
@@ -132,7 +132,6 @@ def auth_device():
             'user': user.to_dict()
         }), 200
     else:
-        # Kullanıcı yoksa, kayıtlı değilse 404 döndür. Artık burada yeni kullanıcı oluşturulmayacak!
         return jsonify({'message': 'User not registered with this device ID'}), 404
 
 # YENİ CİHAZ KAYDI (ilk kez kayıt olanlar için)
@@ -149,7 +148,7 @@ def register_device():
     if User.query.filter_by(device_id=device_id).first():
         return jsonify({'message': 'User with this device ID already exists'}), 409
 
-    new_user = User(first_name=first_name, last_name=last_name, device_id=device_id, role='pending', is_approved=False) # is_approved'ı False olarak kaydet
+    new_user = User(first_name=first_name, last_name=last_name, device_id=device_id, role='pending', is_approved=False)
     db.session.add(new_user)
     db.session.commit()
     return jsonify({
@@ -180,7 +179,6 @@ def get_user_machines(device_id):
     user = User.query.filter_by(device_id=device_id).first()
     if not user:
         return jsonify({'message': 'User not found'}), 404
-    # Rolü pending değilse veya onaylıysa erişim izni ver
     if user.role == 'pending':
         return jsonify({'message': 'User not approved yet'}), 403
     
@@ -201,6 +199,9 @@ def start_usage_log():
         return jsonify({'message': 'User or Machine not found'}), 404
     if user.role == 'pending':
         return jsonify({'message': 'User not approved yet'}), 403
+    if machine.status != 'active':
+        return jsonify({'message': f'Machine is currently {machine.status}'}), 403
+
 
     new_log = UsageLog(user_id=user.id, machine_id=machine.id, start_time=datetime.utcnow(), status='started')
     db.session.add(new_log)
@@ -221,7 +222,7 @@ def stop_usage_log():
         return jsonify({'message': 'User or Machine not found'}), 404
     if user.role == 'pending':
         return jsonify({'message': 'User not approved yet'}), 403
-
+    
     latest_log = UsageLog.query.filter_by(user_id=user.id, machine_id=machine.id, status='started').order_by(UsageLog.start_time.desc()).first()
 
     if latest_log:
@@ -251,7 +252,7 @@ def manage_users():
         if User.query.filter_by(device_id=device_id).first():
             return jsonify({'message': 'User with this device ID already exists'}), 409
 
-        new_user = User(first_name=first_name, last_name=last_name, device_id=device_id, role=role, is_approved=False) # is_approved'ı False olarak kaydet
+        new_user = User(first_name=first_name, last_name=last_name, device_id=device_id, role=role, is_approved=False)
         if role == 'admin' and password:
             new_user.set_password(password)
         db.session.add(new_user)
@@ -259,7 +260,7 @@ def manage_users():
         return jsonify({'message': 'User created', 'user': new_user.to_dict()}), 201
     
     # GET metodu
-    users = User.query.all()
+    users = db.session.query(User).options(db.joinedload(User.machines)).all() # User listesi çekerken atanan makineleri de çek
     return jsonify([user.to_dict() for user in users]), 200
 
 @app.route('/api/admin/users/<int:user_id>', methods=['GET', 'PUT', 'DELETE'])
@@ -273,19 +274,36 @@ def manage_single_user(user_id):
         data = request.get_json()
         user.first_name = data.get('first_name', user.first_name)
         user.last_name = data.get('last_name', user.last_name)
-        user.role = data.get('role', user.role) # Rolü doğrudan güncelle
+        user.role = data.get('role', user.role)
         user.is_approved = data.get('is_approved', user.is_approved) # is_approved'ı güncelleyebiliriz
+
+        if user.role != 'pending' and not user.is_approved: # Rol 'pending' değilse ve onaylı değilse otomatik onay
+            user.is_approved = True
+        elif user.role == 'pending' and user.is_approved: # Rol 'pending' ise ve onaylıysa, onayı kaldır (mantıksal tutarlılık)
+            user.is_approved = False
+
 
         if user.role == 'admin' and 'password' in data and data['password']:
             user.set_password(data['password'])
 
         if 'machines' in data and user.role == 'technician':
-            machine_ids = data['machines']
-            user.machines = []
-            for mid in machine_ids:
-                machine = Machine.query.get(mid)
+            new_assigned_machine_ids = set(data['machines']) # Yeni atanan makine ID'leri
+            
+            # Mevcut atamaları güncelle
+            current_assigned_machines = set(m.id for m in user.machines)
+
+            to_add = new_assigned_machine_ids - current_assigned_machines
+            to_remove = current_assigned_machines - new_assigned_machine_ids
+
+            for machine_id in to_add:
+                machine = Machine.query.get(machine_id)
                 if machine:
                     user.machines.append(machine)
+            
+            for machine_id in to_remove:
+                machine = Machine.query.get(machine_id)
+                if machine:
+                    user.machines.remove(machine)
 
         db.session.commit()
         return jsonify({'message': 'User updated', 'user': user.to_dict()}), 200
@@ -305,7 +323,7 @@ def manage_machines():
         data = request.get_json()
         name = data.get('name')
         mac_address = data.get('mac_address')
-        is_active = data.get('is_active', True)
+        status = data.get('status', 'active')
 
         if not (name and mac_address):
             return jsonify({'message': 'Missing data'}), 400
@@ -313,12 +331,12 @@ def manage_machines():
         if Machine.query.filter_by(mac_address=mac_address).first():
             return jsonify({'message': 'Machine with this MAC address already exists'}), 409
 
-        new_machine = Machine(name=name, mac_address=mac_address, is_active=is_active)
+        new_machine = Machine(name=name, mac_address=mac_address, status=status)
         db.session.add(new_machine)
         db.session.commit()
         return jsonify({'message': 'Machine created', 'machine': new_machine.to_dict()}), 201
     
-    machines = Machine.query.all()
+    machines = db.session.query(Machine).options(db.joinedload(Machine.assigned_users)).all() # Makineleri çekerken atanan kullanıcıları da çek
     return jsonify([machine.to_dict() for machine in machines]), 200
 
 @app.route('/api/admin/machines/<int:machine_id>', methods=['GET', 'PUT', 'DELETE'])
@@ -326,13 +344,36 @@ def manage_single_machine(machine_id):
     machine = Machine.query.get_or_404(machine_id)
 
     if request.method == 'GET':
-        return jsonify(machine.to_dict()), 200
+        assigned_user_ids = [user.id for user in machine.assigned_users]
+        machine_dict = machine.to_dict()
+        machine_dict['assigned_user_ids'] = assigned_user_ids
+        return jsonify(machine_dict), 200
     
     elif request.method == 'PUT':
         data = request.get_json()
         machine.name = data.get('name', machine.name)
         machine.mac_address = data.get('mac_address', machine.mac_address)
-        machine.is_active = data.get('is_active', machine.is_active)
+        machine.status = data.get('status', machine.status)
+
+        if 'assigned_user_ids' in data:
+            new_assigned_user_ids = set(data['assigned_user_ids'])
+            
+            # Mevcut atamaları güncelle
+            current_assigned_users = set(user.id for user in machine.assigned_users)
+
+            to_add = new_assigned_user_ids - current_assigned_users
+            to_remove = current_assigned_users - new_assigned_user_ids
+
+            for user_id in to_add:
+                user = User.query.get(user_id)
+                if user and user.role == 'technician':
+                    machine.assigned_users.append(user)
+            
+            for user_id in to_remove:
+                user = User.query.get(user_id)
+                if user:
+                    machine.assigned_users.remove(user)
+
         db.session.commit()
         return jsonify({'message': 'Machine updated', 'machine': machine.to_dict()}), 200
     
@@ -360,7 +401,7 @@ def create_initial_admin():
     if not password:
         return jsonify({'message': 'Password is required'}), 400
 
-    new_admin = User(first_name='Admin', last_name='System', device_id=secrets.token_hex(16), role='admin', is_approved=True) # is_approved'ı True olarak kaydet
+    new_admin = User(first_name='Admin', last_name='System', device_id=secrets.token_hex(16), role='admin', is_approved=True)
     new_admin.set_password(password)
     db.session.add(new_admin)
     db.session.commit()
