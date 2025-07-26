@@ -25,10 +25,10 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
 
-# Tabloları uygulama bağlamı içinde oluşturma komutunu buradan kaldırıyoruz!
-# Bu işlem artık Render'ın build komutu içinde tek seferlik yapılacak.
-# with app.app_context():
-#     db.create_all()
+# Veritabanı tablolarını uygulama bağlamı içinde oluştur
+# Bu kısım, uygulama her başlatıldığında (Render'da gunicorn ile de olsa) çalışacak.
+with app.app_context():
+    db.create_all()
 
 # --- Veritabanı Modelleri ---
 class User(db.Model):
@@ -408,6 +408,4 @@ def create_initial_admin():
     return jsonify({'message': 'Initial admin user created'}), 201
 
 if __name__ == '__main__':
-    with app.app_context():
-        db.create_all()
     app.run(debug=True, port=os.environ.get('PORT', 5000))
