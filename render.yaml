@@ -8,7 +8,13 @@ services:
     startCommand: "gunicorn app:app"
     releaseCommand: "python -c 'from app import db, app; with app.app_context(): db.create_all()'"
     envVars:
-      # DATABASE_URL artık render.yaml'den değil, Render arayüzünden manuel gelecek
+      key: DATABASE_URL
+        # Bu kısım Render'ın kendi veritabanına bağlanmak içindi. Şimdi bunu kaldıracağız.
+        # fromDatabase:
+        #   name: atalian-machine-db
+        #   property: connectionString
+        # Bunun yerine, aşağıdaki gibi kendi Supabase bağlantı dizeniyle dolduracağız:
+        value: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhhdGR4cWpvdHprbnhjeHVla2hkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTMzOTMzMTUsImV4cCI6MjA2ODk2OTMxNX0.cbcFodifNRA55MQSvruhYSIJS78TXoBlLsjsLsDRcm8" # BURAYA SUPABASE BAĞLANTI DİZENİNİ YAPIŞTIR!
       - key: FLASK_APP
         value: app
       - key: FLASK_ENV

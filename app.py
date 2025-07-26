@@ -1,4 +1,5 @@
 # app.py
+# app.py
 from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
@@ -10,25 +11,30 @@ from flask_cors import CORS # CORS için
 app = Flask(__name__)
 CORS(app) # CORS'u etkinleştir
 
-# Veritabanı yapılandırması
+# Veritabanı yapılandırması (Supabase için güncellendi)
+# DATABASE_URL ortam değişkeni Supabase bağlantı dizesini içerecek
 db_url = os.environ.get('DATABASE_URL')
 
 if not db_url:
-    raise ValueError("DATABASE_URL environment variable is not set. Please set it in Render.")
+    raise ValueError("DATABASE_URL environment variable is not set. Please set it in Render with your Supabase connection string.")
 
-# Yeni psycopg sürücüsü için URL şemasını güncelle
+# SQLAlchemy'nin Psycopg2 veya Psycopg3 sürücüsü için şema güncellemesi
+# Supabase genellikle 'postgresql' kullanır, ancak SQLAlchemy için 'postgresql+psycopg' veya 'postgresql+psycopg2' gerekebilir.
+# Eğer Supabase bağlantı dizeniz 'postgresql://' ile başlıyorsa, aşağıdaki satırı ekleyin:
 if db_url.startswith('postgresql://'):
-    db_url = db_url.replace('postgresql://', 'postgresql+psycopg://')
-    
+    db_url = db_url.replace('postgresql://', 'postgresql+psycopg://') # Veya 'postgresql+psycopg2://' deneyebiliriz
+
 app.config['SQLALCHEMY_DATABASE_URI'] = db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
 
+# db.create_all() komutunu buradan kaldırıyoruz, çünkü Render'ın releaseCommand'inde veya Supabase'in kendi migrasyonunda yöneteceğiz.
+# with app.app_context():
+#     db.create_all() # BU SATIRI KALDIRILDI!
+
 # Veritabanı tablolarını uygulama bağlamı içinde oluştur
 # Bu kısım, uygulama her başlatıldığında (Render'da gunicorn ile de olsa) çalışacak.
-with app.app_context():
-    db.create_all()
 
 # --- Veritabanı Modelleri ---
 class User(db.Model):
