@@ -407,5 +407,5 @@ def create_initial_admin():
     db.session.commit()
     return jsonify({'message': 'Initial admin user created'}), 201
 
-if __name__ == '__main__':
-    app.run(debug=True, port=os.environ.get('PORT', 5000))
+#if __name__ == '__main__':
+#    app.run(debug=True, port=os.environ.get('PORT', 5000))

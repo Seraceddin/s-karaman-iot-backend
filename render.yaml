@@ -6,6 +6,7 @@ services:
     plan: free
     buildCommand: "pip install -r requirements.txt"
     startCommand: "gunicorn app:app"
+    releaseCommand: "python -c 'from app import db, app; with app.app_context(): db.create_all()'"
     envVars:
       # DATABASE_URL artık render.yaml'den değil, Render arayüzünden manuel gelecek
       - key: FLASK_APP
